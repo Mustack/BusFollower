@@ -18,14 +18,18 @@
 # <http://www.gnu.org/licenses/>.
 #
 
+# Run this script from the root of the root of the project
+
 import os
+
+path = os.getcwd() + '/'
 
 for filename in os.listdir('svg'):
     if filename.endswith('.svg'):
-        prefix = filename[0:-4]
-        os.system('inkscape -e res/drawable-xhdpi/' + prefix + '.png -d 320 svg/' + prefix + '.svg')
-        os.system('inkscape -e res/drawable-hdpi/' + prefix + '.png -d 240 svg/' + prefix + '.svg')
-        os.system('inkscape -e res/drawable-mdpi/' + prefix + '.png -d 160 svg/' + prefix + '.svg')
-        os.system('inkscape -e res/drawable-ldpi/' + prefix + '.png -d 120 svg/' + prefix + '.svg')
+        fileWithDir = path + 'svg/' + filename
+        os.system('inkscape -e ' + path + 'res/drawable-xhdpi/' + filename[0:-4] + '.png -d 320 ' + fileWithDir)
+        os.system('inkscape -e ' + path + 'res/drawable-hdpi/' + filename[0:-4] + '.png -d 240 ' + fileWithDir)
+        os.system('inkscape -e ' + path + 'res/drawable-mdpi/' + filename[0:-4] + '.png -d 160 ' + fileWithDir)
+        os.system('inkscape -e ' + path + 'res/drawable-ldpi/' + filename[0:-4] + '.png -d 120 ' + fileWithDir)
     if filename == 'launcher_icon.svg':
-        os.system('inkscape -e google-play-icon.png -h 512 -w 512 svg/' + prefix + '.svg')
+        os.system('inkscape -e ' + path + 'google-play-icon.png -h 512 -w 512 ' + fileWithDir)
