@@ -32,3 +32,6 @@ launcher_icon.png
 /google-play-icon.png
 /gtfs/*.zip
 /assets/db
+.gradle
+gradle
+build

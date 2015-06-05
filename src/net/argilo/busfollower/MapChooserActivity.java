@@ -20,9 +20,17 @@
 
 package net.argilo.busfollower;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Stack;
 
+import net.argilo.busfollower.ocdata.DatabaseHelper;
 import net.argilo.busfollower.ocdata.Stop;
+
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -34,100 +42,68 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.MenuItem;
 
-import com.google.android.maps.GeoPoint;
-import com.google.android.maps.MapActivity;
-import com.google.android.maps.MapController;
-import com.google.android.maps.MyLocationOverlay;
-import com.google.android.maps.Overlay;
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.GoogleMap.OnCameraChangeListener;
+import com.google.android.gms.maps.MapFragment;
+import com.google.android.gms.maps.OnMapReadyCallback;
+import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.Marker;
+import com.google.android.gms.maps.model.MarkerOptions;
 
-public class MapChooserActivity extends MapActivity {
+public class MapChooserActivity extends Activity implements OnMapReadyCallback, OnCameraChangeListener {
     private static final String TAG = "MapChooserActivity";
-    private static final int MIN_ZOOM_LEVEL = 17; // The minimum zoom level at which stops will be displayed.
+    private static final float MIN_ZOOM_LEVEL = 15; // The minimum zoom level at which stops will be displayed.
+
+    private GoogleMap mMap = null;
+    private Bundle mSavedInstanceState = null;
     
     private SQLiteDatabase db;
     private static FetchRoutesTask task = null;
-    private StopsMapView mapView = null;
-    private MyLocationOverlay myLocationOverlay = null;
-    
+
     // Values taken from stops.txt.
     private static int globalMinLatitude = 45130104;
     private static int globalMaxLatitude = 45519650;
     private static int globalMinLongitude = -76040543;
     private static int globalMaxLongitude = -75342690;
 
+    // We maintain this Hashmap in order to deal with clicking on markers
+    private HashMap<Marker, Stop> markers;
+
     /** Called when the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.mapchooser);
-        
+
         db = ((BusFollowerApplication) getApplication()).getDatabase();
-        
+
+        markers = new HashMap<Marker, Stop>();
+
         Util.setDisplayHomeAsUpEnabled(this, true);
 
-        mapView = (StopsMapView) findViewById(R.id.mapView);
-        mapView.setBuiltInZoomControls(true);
-        mapView.addMapMoveListener(new StopsMapView.MapMoveListener() {
-            @Override
-            public void onMapMove() {
-                new DisplayStopsTask().execute();
-            }
-        });
-        
-        myLocationOverlay = new MyLocationOverlay(this, mapView);
-        mapView.getOverlays().add(myLocationOverlay);
+        MapFragment mapFragment = (MapFragment) getFragmentManager().findFragmentById(R.id.map);
 
-        final MapController mapController = mapView.getController();
-        if (savedInstanceState != null) {
-            if (task != null) {
-                // Let the AsyncTask know we're back.
-                task.setActivityContext(this);
-            }
-            mapController.setZoom(savedInstanceState.getInt("mapZoom"));
-            mapController.setCenter(new GeoPoint(savedInstanceState.getInt("mapCenterLatitude"), savedInstanceState.getInt("mapCenterLongitude")));
-        } else {
-            SharedPreferences settings = getPreferences(Context.MODE_PRIVATE);
-            int mapZoom = settings.getInt("mapZoom", -1);
-            if (mapZoom != -1) {
-                mapController.setZoom(mapZoom);
-                mapController.setCenter(new GeoPoint(settings.getInt("mapCenterLatitude", 0), settings.getInt("mapCenterLongitude", 0)));
-            } else {
-                // If it's our first time running, initially show OC Transpo's service area.
-                mapController.zoomToSpan((globalMaxLatitude - globalMinLatitude), (globalMaxLongitude - globalMinLongitude));
-                mapController.setCenter(new GeoPoint((globalMaxLatitude + globalMinLatitude) / 2, (globalMaxLongitude + globalMinLongitude) / 2));
-            }
-            myLocationOverlay.runOnFirstFix(new Runnable() {
-                @Override
-                public void run() {
-                    mapController.setZoom(MIN_ZOOM_LEVEL);
-                    mapController.setCenter(myLocationOverlay.getMyLocation());
-                    new DisplayStopsTask().execute();
-                }
-            });
-        }
-        new DisplayStopsTask().execute();
-    }
-    
-    @Override
-    protected void onResume() {
-        super.onResume();
-        
-        myLocationOverlay.enableMyLocation();
+        mSavedInstanceState = savedInstanceState;
+
+        mapFragment.getMapAsync(this);
     }
     
     @Override
     protected void onPause() {
         super.onPause();
         
-        myLocationOverlay.disableMyLocation();
-        
-        SharedPreferences settings = getPreferences(Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = settings.edit();
-        GeoPoint mapCenter = mapView.getMapCenter();
-        editor.putInt("mapCenterLatitude", mapCenter.getLatitudeE6());
-        editor.putInt("mapCenterLongitude", mapCenter.getLongitudeE6());
-        editor.putInt("mapZoom", mapView.getZoomLevel());
-        editor.commit();
+        if (mMap != null) {
+            SharedPreferences settings = getPreferences(Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = settings.edit();
+
+            editor.putLong("mapCenterLatitude", Double.doubleToRawLongBits(mMap.getCameraPosition().target.latitude));
+            editor.putLong("mapCenterLongitude", Double.doubleToRawLongBits(mMap.getCameraPosition().target.longitude));
+            editor.putFloat("mapZoom", mMap.getCameraPosition().zoom);
+            editor.commit();
+        }
     }
     
     @Override
@@ -153,37 +129,95 @@ public class MapChooserActivity extends MapActivity {
             task.setActivityContext(null);
         }
 
-        GeoPoint mapCenter = mapView.getMapCenter();
-        outState.putInt("mapCenterLatitude", mapCenter.getLatitudeE6());
-        outState.putInt("mapCenterLongitude", mapCenter.getLongitudeE6());
-        outState.putInt("mapZoom", mapView.getZoomLevel());
+        if (mMap != null) {
+            outState.putDouble("mapCenterLatitude", mMap.getCameraPosition().target.latitude);
+            outState.putDouble("mapCenterLongitude", mMap.getCameraPosition().target.longitude);
+            outState.putFloat("mapZoom", mMap.getCameraPosition().zoom);
+        }
     }
     
     @Override
-    protected boolean isRouteDisplayed() {
-        return false;
+    public void onMapReady(GoogleMap googleMap) {
+        mMap = googleMap;
+
+        mMap.setMyLocationEnabled(true);
+
+        if (mSavedInstanceState != null) {
+            if (task != null) {
+                // Let the AsyncTask know we're back.
+                task.setActivityContext(this);
+            }
+
+            LatLng position = new LatLng(mSavedInstanceState.getDouble("mapCenterLatitude"), mSavedInstanceState.getDouble("mapCenterLongitude"));
+            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(position, mSavedInstanceState.getFloat("mapZoom")));
+        } else {
+            SharedPreferences settings = getPreferences(Context.MODE_PRIVATE);
+            float mapZoom = settings.getFloat("mapZoom", -1);
+            if (mapZoom != -1) {
+                double lat = Double.longBitsToDouble(settings.getLong("mapCenterLatitude", 0));
+                double lng = Double.longBitsToDouble(settings.getLong("mapCenterLongitude", 0));
+                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(lat, lng), mapZoom));
+            } else {
+                // If it's our first time running, initially show OC Transpo's service area.
+                LatLngBounds bounds = new LatLngBounds (new LatLng (globalMinLatitude, globalMinLongitude), new LatLng (globalMaxLatitude, globalMaxLongitude));
+                mMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0));
+            }
+        }
+
+        mMap.setOnCameraChangeListener(this);
+
+        new DisplayStopsTask().execute();
     }
-    
-    private class DisplayStopsTask extends AsyncTask<Void, Void, BusFollowerItemizedOverlay> {
+
+    @Override
+    public void onCameraChange(CameraPosition cameraPosition) {
+        new DisplayStopsTask().execute();
+    }
+
+    private class DisplayStopsTask extends AsyncTask<Void, Void, ArrayList<Stop>> {
+        String minLatitude, maxLatitude, minLongitude, maxLongitude = "";
+
         @Override
-        protected BusFollowerItemizedOverlay doInBackground(Void... params) {
-            if (mapView.getZoomLevel() < MIN_ZOOM_LEVEL) {
+        protected void onPreExecute() {
+            if (mMap.getCameraPosition().zoom < MIN_ZOOM_LEVEL) {
+                cancel(true);
+                return;
+            }
+
+            LatLngBounds proj = mMap.getProjection().getVisibleRegion().latLngBounds;
+
+            double minLat = Math.min(proj.southwest.latitude, proj.northeast.latitude);
+            double maxLat = Math.max(proj.southwest.latitude, proj.northeast.latitude);
+            double minLng = Math.min(proj.southwest.longitude, proj.northeast.longitude);
+            double maxLng = Math.max(proj.southwest.longitude, proj.northeast.longitude);
+
+            minLatitude = String.valueOf(minLat);
+            maxLatitude = String.valueOf(maxLat);
+            minLongitude = String.valueOf(minLng);
+            maxLongitude = String.valueOf(maxLng);
+
+            // Remove markers no longer on the screen
+            Iterator it = markers.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry pair = (Map.Entry)it.next();
+                LatLng pos = ((Stop) pair.getValue()).getLocation();
+                if (pos.latitude < minLat || pos.latitude > maxLat ||
+                    pos.longitude < minLng || pos.longitude > maxLng) {
+                    // Remove marker from GoogleMap and HashMap
+                    ((Marker) pair.getKey()).remove();
+                    it.remove();
+                }
+            }
+        }
+
+        @Override
+        protected ArrayList<Stop> doInBackground(Void... params) {
+            if (isCancelled()) {
                 return null;
             }
-            Drawable drawable = getResources().getDrawable(R.drawable.stop);
-            BusFollowerItemizedOverlay itemizedOverlay = new BusFollowerItemizedOverlay(drawable, MapChooserActivity.this, db);
-            
-            int centerLatitude = mapView.getMapCenter().getLatitudeE6();
-            int centerLongitude = mapView.getMapCenter().getLongitudeE6();
-            
-            int latitudeSpan = mapView.getLatitudeSpan() * 20 / 10;
-            int longitudeSpan = mapView.getLongitudeSpan() * 20 / 10;
-            
-            String minLatitude = String.valueOf(centerLatitude - latitudeSpan / 2);
-            String maxLatitude = String.valueOf(centerLatitude + latitudeSpan / 2);
-            String minLongitude = String.valueOf(centerLongitude - longitudeSpan / 2);
-            String maxLongitude = String.valueOf(centerLongitude + longitudeSpan / 2);
-            
+
+            ArrayList<Stop> stops = new ArrayList<Stop>();
+
             Log.d(TAG, "Before rawQuery");
             long startTime = System.currentTimeMillis();
             Cursor cursor = db.rawQuery("SELECT stop_code, stop_name, stop_lat, stop_lon FROM stops " +
@@ -196,12 +230,11 @@ public class MapChooserActivity extends MapActivity {
                 while (!cursor.isAfterLast()) {
                     String stopCode = cursor.getString(0);
                     String stopName = cursor.getString(1);
-                    int stopLat = cursor.getInt(2);
-                    int stopLon = cursor.getInt(3);
+                    double stopLat = cursor.getDouble(2);
+                    double stopLon = cursor.getDouble(3);
                     
-                    GeoPoint point = new GeoPoint(stopLat, stopLon);
-                    if (point != null) {
-                        itemizedOverlay.addOverlay(new StopOverlayItem(new Stop(stopCode, stopName, stopLat, stopLon), MapChooserActivity.this));
+                    if (stopCode != null) {
+                        stops.add(new Stop(stopCode, stopName, stopLat, stopLon));
                     }
                     
                     cursor.moveToNext();
@@ -209,26 +242,23 @@ public class MapChooserActivity extends MapActivity {
                 cursor.close();
                 Log.d(TAG, "After cursor.close() " + (System.currentTimeMillis() - startTime));
             }
-            return itemizedOverlay;
+
+            return stops;
         }
-        
+
         @Override
-        protected void onPostExecute(BusFollowerItemizedOverlay itemizedOverlay) {
-            List<Overlay> mapOverlays = mapView.getOverlays();
-            // Remove the existing BusFollowerItemizedOverlay, if any.
-            for (Overlay overlay : mapOverlays) {
-                if (overlay instanceof BusFollowerItemizedOverlay) {
-                    mapOverlays.remove(overlay);
-                }
+        protected void onPostExecute(ArrayList<Stop> stops) {
+            if (stops.isEmpty()) {
+                return;
             }
-            if ((itemizedOverlay != null) && (itemizedOverlay.size() > 0)) {
-                mapOverlays.add(itemizedOverlay);
+
+            for (Stop stop : stops) {
+                Marker marker = mMap.addMarker(new MarkerOptions()
+                        .position(stop.getLocation())
+                        .title(stop.getName()));
+
+                markers.put(marker, stop);
             }
-            mapView.invalidate();
         }
-    }
-    
-    public void setFetchRoutesTask(FetchRoutesTask task) {
-        MapChooserActivity.task = task;
     }
 }

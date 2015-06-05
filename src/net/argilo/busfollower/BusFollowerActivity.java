@@ -23,27 +23,27 @@ package net.argilo.busfollower;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.List;
 
 import net.argilo.busfollower.ocdata.GetNextTripsForStopResult;
 import net.argilo.busfollower.ocdata.Route;
 import net.argilo.busfollower.ocdata.RouteDirection;
 import net.argilo.busfollower.ocdata.Trip;
 
-import com.google.android.maps.GeoPoint;
-import com.google.android.maps.MapActivity;
-import com.google.android.maps.MapController;
-import com.google.android.maps.MapView;
-import com.google.android.maps.Overlay;
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.MapFragment;
+import com.google.android.gms.maps.OnMapReadyCallback;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.MarkerOptions;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.sqlite.SQLiteDatabase;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -57,18 +57,20 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.AdapterView.OnItemClickListener;
 
-public class BusFollowerActivity extends MapActivity {
+public class BusFollowerActivity extends Activity implements OnMapReadyCallback {
     private static final String TAG = "BusFollowerActivity";
     // The zoom level to use when there's only one point to display.
     private static final int MIN_ZOOM = 10000;
+    private boolean isZoomAndCenterRequired = true;
     
     private SQLiteDatabase db;
     private static FetchTripsTask task;
     private GetNextTripsForStopResult result = null;
     private Route route;
 
-    private MapView mapView = null;
     private ListView tripList = null;
+    private GoogleMap mMap = null;
+
     
     /** Called when the activity is first created. */
     @Override
@@ -80,9 +82,8 @@ public class BusFollowerActivity extends MapActivity {
         
         Util.setDisplayHomeAsUpEnabled(this, true);
 
-        mapView = (MapView) findViewById(R.id.mapView);
-        mapView.setBuiltInZoomControls(true);
-        
+        MapFragment mapFragment = (MapFragment) getFragmentManager().findFragmentById(R.id.map);
+
         tripList = (ListView) findViewById(R.id.tripList);
         tripList.setOnItemClickListener(new OnItemClickListener() {
             @Override
@@ -113,26 +114,18 @@ public class BusFollowerActivity extends MapActivity {
 
             if (result != null) {
                 // A configuration change has occurred. Don't reset zoom & center.
-                displayGetNextTripsForStopResult(false);
-            } else {
-                // Zoom to OC Transpo service area if it's our first time.
-                MapController mapController = mapView.getController();
-                mapController.zoomToSpan(MIN_ZOOM, MIN_ZOOM);
-                mapController.setCenter(result.getStop().getLocation());
+                isZoomAndCenterRequired = false;
             }
         } else {
             RecentQueryList.addOrUpdateRecent(this, result.getStop(), route);
             // We're arriving from another activity, so set zoom & center.
-            displayGetNextTripsForStopResult(true);
+            isZoomAndCenterRequired = true;
         }
         
         setTitle(getString(R.string.stop_number) + " " + result.getStop().getNumber() +
                 ", " + getString(R.string.route_number) + " " + route.getNumber() + " " + route.getHeading());
-    }
-    
-    @Override
-    protected boolean isRouteDisplayed() {
-        return false;
+
+        mapFragment.getMapAsync(this);
     }
     
     @Override
@@ -172,22 +165,20 @@ public class BusFollowerActivity extends MapActivity {
         }
     }
     
-    private void displayGetNextTripsForStopResult(boolean zoomAndCenter) {
-        List<Overlay> mapOverlays = mapView.getOverlays();
-        mapOverlays.clear();
-        Drawable drawable = BusFollowerActivity.this.getResources().getDrawable(R.drawable.pin_red);
-        BusFollowerItemizedOverlay itemizedOverlay = new BusFollowerItemizedOverlay(drawable, BusFollowerActivity.this, db);
+    private void displayGetNextTripsForStopResult() {
+        double minLat = Double.MAX_VALUE;
+        double maxLat = Double.MIN_VALUE;
+        double minLong = Double.MAX_VALUE;
+        double maxLong = Double.MIN_VALUE;
         
-        int minLatitude = Integer.MAX_VALUE;
-        int maxLatitude = Integer.MIN_VALUE;
-        int minLongitude = Integer.MAX_VALUE;
-        int maxLongitude = Integer.MIN_VALUE;
-        
-        GeoPoint stopLocation = result.getStop().getLocation();
+        LatLng stopLocation = result.getStop().getLocation();
         if (stopLocation != null) {
-            itemizedOverlay.addOverlay(new StopOverlayItem(result.getStop(), BusFollowerActivity.this));
-            minLatitude = maxLatitude = stopLocation.getLatitudeE6();
-            minLongitude = maxLongitude = stopLocation.getLongitudeE6();
+            mMap.addMarker(new MarkerOptions()
+                    .position(stopLocation)
+                    .title(result.getStopLabel()));
+
+            minLat = maxLat = stopLocation.latitude;
+            minLong = maxLong = stopLocation.longitude;
         }
 
         for (RouteDirection rd : result.getRouteDirections()) {
@@ -197,34 +188,36 @@ public class BusFollowerActivity extends MapActivity {
                 int number = 0;
                 for (Trip trip : rd.getTrips()) {
                     number++;
-                    GeoPoint point = trip.getGeoPoint();
+                    LatLng point = trip.getLatLng();
                     if (point != null) {
-                        minLatitude = Math.min(minLatitude, point.getLatitudeE6());
-                        maxLatitude = Math.max(maxLatitude, point.getLatitudeE6());
-                        minLongitude = Math.min(minLongitude, point.getLongitudeE6());
-                        maxLongitude = Math.max(maxLongitude, point.getLongitudeE6());
-                        
-                        itemizedOverlay.addOverlay(new BusOverlayItem(point, BusFollowerActivity.this, rd, trip, number));
+                        minLat = Math.min(minLat, point.latitude);
+                        maxLat = Math.max(maxLat, point.latitude);
+                        minLong = Math.min(minLong, point.longitude);
+                        maxLong = Math.max(maxLong, point.longitude);
+
+                        mMap.addMarker(new MarkerOptions().position(stopLocation));
                     }
                 }
             }
         }
-        if (itemizedOverlay.size() > 0) {
-            mapOverlays.add(itemizedOverlay);
-            
-            if (zoomAndCenter) {
-                MapController mapController = mapView.getController();
-                mapController.zoomToSpan(Math.max(MIN_ZOOM, (maxLatitude - minLatitude) * 110 / 100), Math.max(MIN_ZOOM, (maxLongitude - minLongitude) * 110 / 100));
-                mapController.setCenter(new GeoPoint((maxLatitude + minLatitude) / 2, (maxLongitude + minLongitude) / 2));
-            }
+
+        if (isZoomAndCenterRequired) {
+            LatLngBounds bounds = new LatLngBounds (new LatLng (minLat ,minLong),new LatLng (maxLat ,maxLong ));
+            mMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0));
         }
-        mapView.invalidate();
     }
     
     public void setResult(GetNextTripsForStopResult result) {
         this.result = result;
         // The user requested a refresh. Don't reset zoom & center.
-        displayGetNextTripsForStopResult(false);
+        isZoomAndCenterRequired = false;
+        displayGetNextTripsForStopResult();
+    }
+
+    @Override
+    public void onMapReady(GoogleMap googleMap) {
+        this.mMap = googleMap;
+        displayGetNextTripsForStopResult();
     }
 
     private class TripAdapter extends ArrayAdapter<Trip> {
@@ -252,7 +245,7 @@ public class BusFollowerActivity extends MapActivity {
                 ImageView busPin = (ImageView) v.findViewById(R.id.busPin);
                 text1.setText(getHumanReadableTime(trip.getAdjustedScheduleTime()) + " (" + context.getResources().getString(trip.isEstimated() ? R.string.estimated : R.string.scheduled) + ")");
                 text2.setText("Destination: " + trip.getDestination());
-                if (trip.getGeoPoint() == null) {
+                if (trip.getLatLng() == null) {
                     busPin.setImageDrawable(null);
                 } else {
                     busPin.setImageDrawable(Util.getNumberedPin(BusFollowerActivity.this, position + 1));

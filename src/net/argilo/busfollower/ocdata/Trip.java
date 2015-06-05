@@ -29,7 +29,7 @@ import java.util.TimeZone;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
-import com.google.android.maps.GeoPoint;
+import com.google.android.gms.maps.model.LatLng;
 
 import android.util.Log;
 
@@ -44,8 +44,8 @@ public class Trip implements Serializable {
     private boolean lastTripOfSchedule = false;
     private BusType busType = new BusType("");
     private float gpsSpeed = Float.NaN;
-    private int latitude = Integer.MIN_VALUE;
-    private int longitude = Integer.MIN_VALUE;
+    private double latitude = Double.MIN_VALUE;
+    private double longitude = Double.MIN_VALUE;
     
     // Needed to get the request processing time.
     private RouteDirection routeDirection;
@@ -172,11 +172,11 @@ public class Trip implements Serializable {
         return gpsSpeed;
     }
     
-    public GeoPoint getGeoPoint() {
+    public LatLng getLatLng() {
         if (latitude == Integer.MIN_VALUE || longitude == Integer.MIN_VALUE) {
             return null;
         } else {
-            return new GeoPoint(latitude, longitude);
+            return new LatLng(latitude, longitude);
         }
     }
     

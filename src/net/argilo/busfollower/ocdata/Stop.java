@@ -28,15 +28,15 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
-import com.google.android.maps.GeoPoint;
+import com.google.android.gms.maps.model.LatLng;
 
 public class Stop implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private String number = null;
     private String name = null;
-    private int latitude;
-    private int longitude;
+    private double latitude;
+    private double longitude;
     
     public Stop(Context context, SQLiteDatabase db, String number) throws IllegalArgumentException {
         // Zero-pad the stop number to 4 digits.
@@ -94,11 +94,18 @@ public class Stop implements Serializable {
         this.number = number;
     }
     
-    public Stop(String number, String name, int latitude, int longitude) {
+    public Stop(String number, String name, double latitude, double longitude) {
         this.number = number;
         this.name = name;
         this.latitude = latitude;
         this.longitude = longitude;
+    }
+
+    public Stop(String number, String name, LatLng latLng) {
+        this.number = number;
+        this.name = name;
+        this.latitude = latLng.latitude;
+        this.longitude = latLng.longitude;
     }
     
     public String getNumber() {
@@ -109,8 +116,8 @@ public class Stop implements Serializable {
         return name;
     }
     
-    public GeoPoint getLocation() {
-        return new GeoPoint(latitude, longitude);
+    public LatLng getLocation() {
+        return new LatLng(latitude, longitude);
     }
     
     @Override
